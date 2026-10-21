@@ -1,0 +1,61 @@
+# Recording rules that bridge the two JVM metric naming conventions
+# present in a Strimzi Kafka pod:
+#   - Prometheus Client naming expected by the upstream Strimzi Grafana
+#     dashboard (jvm_memory_bytes_used, jvm_gc_collection_seconds_count, ...)
+#   - Micrometer naming that Kafka 3.9 ships natively
+#     (jvm_memory_used_bytes, jvm_gc_pause_seconds_count, ...)
+#
+# Rename happens at Prometheus level so the dashboard doesn't need
+# patching and the raw Micrometer metrics stay available for anything else.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jvm-metric-rename
+  namespace: kafka
+  labels:
+    app: strimzi
+spec:
+  groups:
+    - name: jvm-naming-bridge
+      interval: 30s
+      rules:
+        # JVM memory used (heap + nonheap) - with "area" label the dashboard filters on
+        - record: jvm_memory_bytes_used
+          expr: |
+            label_replace(
+              label_replace(
+                jvm_memory_used_bytes,
+                "area", "heap", "id", "(G1 Eden Space|G1 Old Gen|G1 Survivor Space)"
+              ),
+              "area", "nonheap", "id", "(.*Metaspace|Compressed Class Space|CodeHeap.*)"
+            )
+        - record: jvm_memory_bytes_committed
+          expr: |
+            label_replace(
+              label_replace(
+                jvm_memory_committed_bytes,
+                "area", "heap", "id", "(G1 Eden Space|G1 Old Gen|G1 Survivor Space)"
+              ),
+              "area", "nonheap", "id", "(.*Metaspace|Compressed Class Space|CodeHeap.*)"
+            )
+        - record: jvm_memory_bytes_max
+          expr: |
+            label_replace(
+              label_replace(
+                jvm_memory_max_bytes,
+                "area", "heap", "id", "(G1 Eden Space|G1 Old Gen|G1 Survivor Space)"
+              ),
+              "area", "nonheap", "id", "(.*Metaspace|Compressed Class Space|CodeHeap.*)"
+            )
+        # GC pause -> Collection seconds (dashboard expects the Prometheus Client naming)
+        - record: jvm_gc_collection_seconds_count
+          expr: jvm_gc_pause_seconds_count
+        - record: jvm_gc_collection_seconds_sum
+          expr: jvm_gc_pause_seconds_sum
+        # Threads - Micrometer and Prom Client agree on name; this is a safety alias
+        - record: jvm_threads_current
+          expr: jvm_threads_live_threads
+        - record: jvm_threads_daemon
+          expr: jvm_threads_daemon_threads
+        - record: jvm_classes_loaded
+          expr: jvm_classes_currently_loaded

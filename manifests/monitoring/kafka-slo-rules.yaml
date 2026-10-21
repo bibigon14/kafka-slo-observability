@@ -1,0 +1,109 @@
+# SLO burn-rate alerts and recording rules for the demo Kafka cluster.
+#
+# The SLO itself: 99.9% of consumer poll loops keep lag under one minute
+# over a rolling 30-day window. "One minute of lag" is the error budget
+# event; the burn-rate alert fires when consumption-side regression would
+# exhaust the whole 30-day budget inside the alert's lookback window.
+#
+# Thresholds are the standard Google SRE Workbook multi-window multi-burn
+# pair - 14.4x over 1h catches a fast outage; 6x over 6h catches slow
+# consumer regression that would still blow the budget inside 5 days.
+#
+# Pair these alerts with the Kafka Prometheus Exporter dashboards shipped
+# under docs/grafana/.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kafka-slo
+  namespace: kafka
+  labels:
+    app: strimzi
+    role: alert-rules
+spec:
+  groups:
+    - name: kafka-cluster-health
+      interval: 30s
+      rules:
+        - alert: KafkaUnderReplicatedPartitions
+          expr: sum by (namespace, kubernetes_pod_name) (kafka_server_replicamanager_underreplicatedpartitions) > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Kafka broker {{ $labels.kubernetes_pod_name }} reports under-replicated partitions"
+            description: |
+              Broker {{ $labels.kubernetes_pod_name }} in namespace {{ $labels.namespace }} has
+              {{ $value }} under-replicated partitions for 5m+. Check broker health, disk, and
+              network between brokers before any topic is one failure away from unavailability.
+        - alert: KafkaOfflinePartitions
+          expr: sum by (namespace) (kafka_controller_kafkacontroller_offlinepartitionscount) > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Kafka cluster {{ $labels.namespace }} has offline partitions"
+            description: |
+              {{ $value }} partitions have no live leader - producers writing to them will
+              fail. Check controller logs and broker liveness immediately.
+        - alert: KafkaBrokerDown
+          expr: count by (namespace) (up{pod=~"demo-brokers-.*"}) < 3
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Fewer than 3 Kafka brokers responding in {{ $labels.namespace }}"
+            description: |
+              Only {{ $value }} brokers are returning metrics. Cluster is running without
+              its full replica count - any further loss risks unavailability for topics
+              with min.insync.replicas=2.
+    - name: kafka-consumer-slo
+      interval: 30s
+      rules:
+        # Recording rule: fraction of consumer polls where lag is "good"
+        # (<= 60 seconds, approximated as <= 10000 messages at the demo
+        # producer rate). Burn-rate alerts below use the inverse.
+        - record: slo:kafka_consumer_lag_bad:ratio_rate5m
+          expr: |
+            (
+              sum by (consumergroup) (
+                rate(kafka_consumergroup_lag_sum[5m])
+              )
+            ) /
+            (
+              sum by (consumergroup) (
+                rate(kafka_consumergroup_lag_sum[5m])
+              ) + 1
+            )
+        # Fast-burn: 14.4x over 1h would exhaust the 30-day error budget
+        # in 2 days. Pageable.
+        - alert: KafkaConsumerLagBurnRateFast
+          expr: slo:kafka_consumer_lag_bad:ratio_rate5m > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            slo: consumer-lag
+          annotations:
+            summary: "Consumer group {{ $labels.consumergroup }} burning SLO budget 14.4x"
+            description: |
+              Consumer group {{ $labels.consumergroup }} is lagging fast enough that the
+              30-day error budget will be gone in 2 days at this rate. Scale consumers,
+              investigate upstream producer rate spikes, or roll back a recent deploy.
+        # Slow-burn: 6x over 6h would exhaust the 30-day budget in 5 days.
+        # Ticket, not page.
+        - alert: KafkaConsumerLagBurnRateSlow
+          expr: slo:kafka_consumer_lag_bad:ratio_rate5m > (6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            slo: consumer-lag
+          annotations:
+            summary: "Consumer group {{ $labels.consumergroup }} burning SLO budget 6x"
+            description: |
+              Consumer group {{ $labels.consumergroup }} is lagging at a pace that would
+              burn the 30-day error budget in 5 days. Check consumer throughput trend over
+              the last 24h - this is the "slow leak" branch of multi-window burn-rate.

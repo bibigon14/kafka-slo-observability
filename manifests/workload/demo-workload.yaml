@@ -1,0 +1,97 @@
+# Demo workload: a Kafka topic plus a producer and consumer in a tight
+# loop. Keeps the cluster "live" so the Grafana dashboards and SLO burn
+# rate rules have signal to work with without needing a load generator.
+#
+# Producer writes ~5 messages/sec to the demo topic.
+# Consumer reads with its own group so lag metrics track one group end-to-end.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: demo-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: demo
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 3600000       # 1h for a demo
+    segment.bytes: 1073741824
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-producer
+  namespace: kafka
+  labels:
+    app: demo-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-producer
+  template:
+    metadata:
+      labels:
+        app: demo-producer
+    spec:
+      containers:
+        - name: producer
+          image: quay.io/strimzi/kafka:0.47.0-kafka-3.9.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              # Produce a steady stream of JSON-shaped messages. seq restarts
+              # when it hits a billion - fine, this is a demo.
+              i=1
+              while true; do
+                echo "{\"id\":$i,\"ts\":$(date +%s%N),\"src\":\"demo-producer\"}"
+                i=$((i+1))
+                sleep 0.2
+              done | bin/kafka-console-producer.sh \
+                --bootstrap-server demo-kafka-bootstrap:9092 \
+                --topic demo-events
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: "50m"
+            limits:
+              memory: 256Mi
+              cpu: "200m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-consumer
+  namespace: kafka
+  labels:
+    app: demo-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-consumer
+  template:
+    metadata:
+      labels:
+        app: demo-consumer
+    spec:
+      containers:
+        - name: consumer
+          image: quay.io/strimzi/kafka:0.47.0-kafka-3.9.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              exec bin/kafka-console-consumer.sh \
+                --bootstrap-server demo-kafka-bootstrap:9092 \
+                --topic demo-events \
+                --group demo-consumer-group \
+                --from-beginning \
+                > /dev/null
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: "50m"
+            limits:
+              memory: 256Mi
+              cpu: "200m"

@@ -1,0 +1,65 @@
+# Scrape Kafka JMX Prometheus Exporter on every broker pod.
+# Strimzi exposes it on container port 9404 named 'tcp-prometheus'.
+# The PodMonitor lives in kube-prometheus-stack's selector scope because
+# we installed Prometheus Operator with podMonitorSelectorNilUsesHelmValues=false.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kafka-resources-metrics
+  namespace: kafka
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchExpressions:
+      - key: "strimzi.io/kind"
+        operator: In
+        values: ["Kafka", "KafkaConnect", "KafkaMirrorMaker2"]
+  namespaceSelector:
+    matchNames:
+      - kafka
+  podMetricsEndpoints:
+    - path: /metrics
+      port: tcp-prometheus
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node_name
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: kubernetes_pod_name
+        # Dashboard panels filter on strimzi_io_cluster - lift the pod label
+        # into a metric label so cluster-scoped queries resolve.
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_cluster]
+          targetLabel: strimzi_io_cluster
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+          targetLabel: strimzi_io_kind
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_broker_role]
+          targetLabel: strimzi_io_broker_role
+        # Upstream Strimzi Grafana dashboards filter JVM panels on
+        # strimzi_io_name="<cluster>-kafka" and template-var the pod name
+        # from strimzi_io_pod_name - lift both from the pod labels so panels
+        # (JVM Memory Used, JVM GC Time, JVM Thread Count) resolve.
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_name]
+          targetLabel: strimzi_io_name
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_pod_name]
+          targetLabel: strimzi_io_pod_name
+---
+# Entity operator pods expose user/topic reconciliation metrics on :8080.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kafka-entity-operator-metrics
+  namespace: kafka
+  labels:
+    app: strimzi
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/kind: cluster-operator
+  namespaceSelector:
+    matchNames:
+      - kafka
+  podMetricsEndpoints:
+    - path: /metrics
+      port: http

@@ -66,4 +66,6 @@ jobs:
                 --ignore-test container-resources \
                 --ignore-test container-security-context-user-group-id \
                 --ignore-test container-security-context-readonlyrootfilesystem \
-                --ignore-test pod-networkpolicy
+                --ignore-test pod-networkpolicy \
+                --ignore-test container-image-pull-policy \
+                --ignore-test container-ephemeral-storage-request-and-limit

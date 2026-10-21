@@ -130,6 +130,61 @@ The brokers initially ran at 1Gi memory limit and were OOMKilled under
 needed room for the direct byte buffers plus pagecache ingest).
 Bumping to 2Gi + explicit `-Xms 1024m -Xmx 1536m` settled them.
 
+## Alerting path and the OCI FORWARD trap
+
+Alertmanager runs on this OCI VM (as part of kube-prometheus-stack).
+Notifications leave the VM through a WireGuard tunnel to the homelab
+Raspberry Pi, where an existing `alertmanager-telegram-bridge` service
+turns the webhook payload into a Telegram message.
+
+```
+Prometheus (OCI, pod)
+       |
+       | fires -> Alertmanager (OCI, pod 10.42.0.X)
+                                 |
+                                 | webhook POST
+                                 v
+                 wg0 (10.0.0.4 on OCI) <==WireGuard==> wg0 (10.0.0.1 on Pi)
+                                                              |
+                                                              v
+                                             bridge Deployment :30119 (NodePort)
+                                                              |
+                                                              v
+                                                      Telegram bot
+```
+
+The Alertmanager pod sits at a 10.42.0.X address and needs the host's
+`FORWARD` path (via `wg0`) to reach the bridge. Three gotchas, in the
+order you hit them:
+
+1. **SNAT**. By default the pod source address (10.42.0.X) is not
+   translated when leaving on `wg0`, so even if the packet reaches the
+   Pi, the Pi has no return route. Fix:
+   ```
+   iptables -t nat -I POSTROUTING -s 10.42.0.0/16 -o wg0 -j MASQUERADE
+   ```
+2. **FORWARD reject**. Oracle Ubuntu 24.04 ships with an
+   `iptables FORWARD` chain whose very first rule is
+   `reject with icmp host-prohibited` on all traffic, even though the
+   chain policy is `ACCEPT`. Pod networking still works because
+   Flannel's bridge traffic skips `FORWARD` via `bridge-nf-call`,
+   but a packet from a pod bound for a tunnel interface like `wg0`
+   hits this reject and dies silently. The symptom in Alertmanager
+   is `dial tcp 10.0.0.1:30119: connect: no route to host`. Fix is
+   two rules inserted at the top of FORWARD:
+   ```
+   nft insert rule ip filter FORWARD ip saddr 10.42.0.0/16 ip daddr 10.0.0.0/24 counter accept
+   nft insert rule ip filter FORWARD ct state established,related counter accept
+   ```
+3. **WireGuard AllowedIPs on the Pi side**. The Pi's `[Peer]` config
+   must include this OCI VM's wg0 address (`10.0.0.4/32`) in
+   `AllowedIPs`, otherwise it has nothing in its crypto-routing table
+   to send the reply through. For this project the Pi side already had
+   that from the HA Prometheus replica setup.
+
+Persist iptables changes with `netfilter-persistent save` so they
+survive a reboot.
+
 ## Known gaps
 
 - No TLS between producer/consumer and brokers in v0.1 - internal

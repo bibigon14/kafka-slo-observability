@@ -115,6 +115,35 @@ Fast + slow mirrors the Google SRE Workbook pattern: fast fires on an
 incident big enough to burn 2% of the monthly budget in an hour; slow
 catches a slower leak before it eats the budget.
 
+## Alerting
+
+Alertmanager routes every alert in the `kafka` namespace to a Telegram
+bridge running on the homelab Raspberry Pi, over a WireGuard tunnel to
+the OCI VM:
+
+```
+Prometheus (OCI) --fires--> Alertmanager (OCI) --webhook--> 10.0.0.1:30119 (homelab) --> Telegram bot
+```
+
+![Live alert reaching Telegram after FORWARD-chain fix](docs/screenshots/05-telegram-alert.png)
+
+Config lives in `manifests/monitoring/kafka-alertmanager-config.yaml`
+as an `AlertmanagerConfig` CRD in the `kafka` namespace. The parent
+Alertmanager picks it up because `alertmanagerConfigSelector` and
+`alertmanagerConfigNamespaceSelector` are empty (match-all) in the
+kube-prometheus-stack chart.
+
+A trap worth naming: on OCI Ampere A1 running Oracle Ubuntu 24.04 the
+default `iptables FORWARD` chain starts with `reject with icmp
+host-prohibited`, which drops every forwarded packet before policy
+`ACCEPT` can help. Pod networking still appears to work because
+Flannel keeps bridge traffic out of FORWARD, but anything a pod sends
+over a tunnel interface like `wg0` gets rejected silently - the
+Alertmanager pod logs show it as `dial tcp 10.0.0.1:30119: connect: no
+route to host` and the alert fires but never reaches Telegram. Fix is
+two lines (per-pod-CIDR source + conntrack return) at the top of
+FORWARD, documented in [`docs/architecture.md`](docs/architecture.md).
+
 ## Lessons captured in `docs/`
 
 - **PodMonitor relabels for dashboard filters** ([postmortem](docs/postmortems/2026-10-21-strimzi-grafana-no-data.md)). Strimzi's upstream

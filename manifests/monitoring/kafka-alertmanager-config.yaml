@@ -1,0 +1,46 @@
+# AlertmanagerConfig - routes all Kafka-namespace alerts to the homelab
+# Telegram bridge over the WireGuard tunnel between this OCI VM and the
+# Raspberry Pi homelab.
+#
+# The bridge (alertmanager-telegram-bridge) runs as a k8s Deployment on
+# the Pi, exposed via NodePort 30119 at 10.0.0.1 (homelab WireGuard IP
+# as seen from this OCI VM, 10.0.0.4). The Telegram bot token lives in
+# a k8s Secret on the Pi - this cluster holds no credentials.
+#
+# kube-prometheus-stack's Alertmanager was installed with
+# alertmanagerConfigSelector: {} and alertmanagerConfigNamespaceSelector: {},
+# so this CR is picked up without extra selectors.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: kafka-slo-alerts
+  namespace: kafka
+  labels:
+    app: strimzi
+spec:
+  route:
+    receiver: kafka-telegram-bridge
+    # Group by cluster+alertname so three brokers down become one message,
+    # not three.
+    groupBy: [alertname, strimzi_io_cluster]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 1h
+    # Narrow the route to our own alerts by namespace. Everything else
+    # keeps using the parent Alertmanager's default receiver.
+    matchers:
+      - name: namespace
+        value: kafka
+    # critical/page alerts repeat sooner so pages don't go silent while
+    # the burn-rate alert is still firing.
+    routes:
+      - receiver: kafka-telegram-bridge
+        matchers:
+          - name: severity
+            value: critical
+        repeatInterval: 15m
+  receivers:
+    - name: kafka-telegram-bridge
+      webhookConfigs:
+        - url: http://10.0.0.1:30119/webhook
+          sendResolved: true

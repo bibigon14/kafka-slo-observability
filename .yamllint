@@ -1,6 +1,7 @@
 # yamllint config for kafka-slo-observability
-# Relaxed line-length (k8s manifests often have long image/path strings)
-# and allows truthy "on" (used in CronJobs schedules etc.)
+# Relaxed line-length (k8s manifests often have long image/path strings).
+# document-start disabled because multi-doc YAML files use --- separators
+# between docs, which yamllint flags under the default "present: false" rule.
 extends: default
 
 rules:
@@ -11,8 +12,7 @@ rules:
     min-spaces-from-content: 1
   truthy:
     allowed-values: ['true', 'false', 'on', 'off']
-  document-start:
-    present: false
+  document-start: disable
   indentation:
     spaces: 2
     indent-sequences: true

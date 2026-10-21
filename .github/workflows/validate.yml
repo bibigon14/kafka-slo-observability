@@ -58,11 +58,12 @@ jobs:
         # to manifests/workload (producer/consumer) because Strimzi
         # (KafkaNodePool / Kafka CRs) and Prometheus Operator CRs
         # (PodMonitor / PrometheusRule) aren't Pod specs - kube-score
-        # has nothing to say about them.
+        # has nothing to say about them. v1.19 does not recurse into
+        # directories, so expand the glob explicitly.
         run: |
-          kube-score score \
-            --ignore-test container-resources \
-            --ignore-test container-security-context-user-group-id \
-            --ignore-test container-security-context-readonlyrootfilesystem \
-            --ignore-test pod-networkpolicy \
-            manifests/workload/
+          find manifests/workload -name '*.yaml' -print0 \
+            | xargs -0 kube-score score \
+                --ignore-test container-resources \
+                --ignore-test container-security-context-user-group-id \
+                --ignore-test container-security-context-readonlyrootfilesystem \
+                --ignore-test pod-networkpolicy

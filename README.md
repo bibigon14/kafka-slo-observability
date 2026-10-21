@@ -38,12 +38,18 @@ manifests/
   monitoring/
     kafka-podmonitor.yaml           # PodMonitor + strimzi label relabels
     kafka-slo-rules.yaml            # PrometheusRule: SLO burn-rate alerts
+    kafka-slo-recording.yaml        # PrometheusRule: SLI recording rule (lag ratio)
+    kafka-exporter.yaml             # kafka_exporter + PodMonitor (consumer lag SLI)
+    kafka-alertmanager-config.yaml  # AlertmanagerConfig -> Telegram bridge
     jvm-rename-rules.yaml           # Micrometer -> Prom Client naming bridge
   workload/
     demo-workload.yaml              # KafkaTopic + producer + consumer
+scripts/
+  burn-rate-demo.sh                 # one-shot: scale consumer to 0, let alert fire
 docs/
   architecture.md                   # how the pieces fit, metric sources
-  screenshots/                      # live Grafana captures from OCI
+  postmortems/                      # blameless postmortems of real incidents
+  screenshots/                      # live Grafana + Telegram captures from OCI
 ```
 
 ## Deploy
@@ -60,7 +66,8 @@ kubectl apply -f manifests/kafka/
 # 2. Wait for the brokers to settle
 kubectl -n kafka wait kafka/demo --for=condition=Ready --timeout=5m
 
-# 3. Monitoring - PodMonitor + SLO rules + JVM naming bridge
+# 3. Monitoring - PodMonitor + SLO rules + recording rule
+# + JVM naming bridge + kafka_exporter (consumer lag SLI) + Alertmanager routing
 kubectl apply -f manifests/monitoring/
 
 # 4. Demo workload (optional - keeps the dashboards non-empty)
@@ -125,7 +132,9 @@ the OCI VM:
 Prometheus (OCI) --fires--> Alertmanager (OCI) --webhook--> 10.0.0.1:30119 (homelab) --> Telegram bot
 ```
 
-![Live alert reaching Telegram after FORWARD-chain fix](docs/screenshots/05-telegram-alert.png)
+![Real `KafkaConsumerLagBurnRateFast` firing after the consumer was scaled to zero](docs/screenshots/06-burn-rate-alert.png)
+
+The alert carries the burn-rate rationale right in the summary - *"Consumer group burning SLO budget 14.4x. 30-day error budget will be gone in 2 days at this rate. Scale consumers, investigate upstream producer rate spikes, or roll back a recent deploy."* - so the on-call engineer knows what to do before they even open Grafana.
 
 Config lives in `manifests/monitoring/kafka-alertmanager-config.yaml`
 as an `AlertmanagerConfig` CRD in the `kafka` namespace. The parent

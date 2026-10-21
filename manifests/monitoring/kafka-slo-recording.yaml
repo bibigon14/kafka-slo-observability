@@ -1,0 +1,37 @@
+# Recording rule that produces the SLI the burn-rate alerts in
+# kafka-slo-rules.yaml consume. The rule computes, over a 5m window,
+# the fraction of time the maximum partition's consumer lag exceeded
+# the 10000-message SLO threshold.
+#
+# The 5m:30s subquery sweeps the window at a 30s resolution. The
+# `> bool 10000` comparison turns each sample into 0 or 1, and
+# avg_over_time turns the series of 0s and 1s into a fraction.
+#
+# Example readings:
+#   0.0  - the consumer is keeping up, lag never exceeded 10k in the
+#          last 5 minutes - SLO is fully in the black
+#   0.5  - the consumer was behind for half of the last 5 minutes
+#   1.0  - lag was continuously above 10k for the whole 5m window -
+#          we are burning the error budget at the maximum sustained
+#          rate the SLI can observe
+#
+# The 14.4x burn-rate alert fires when this value exceeds
+# 14.4 * (1 - 0.999) = 0.0144, i.e. the error budget is being spent
+# more than 14.4x the sustainable rate for the 99.9% availability SLO.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kafka-slo-recording
+  namespace: kafka
+  labels:
+    app: strimzi
+spec:
+  groups:
+    - name: kafka-slo-recording
+      interval: 30s
+      rules:
+        - record: slo:kafka_consumer_lag_bad:ratio_rate5m
+          expr: |
+            avg_over_time(
+              (max by (namespace) (kafka_consumergroup_lag{consumergroup="demo-consumer-group"}) > bool 10000)[5m:30s]
+            )

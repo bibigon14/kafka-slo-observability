@@ -1,6 +1,6 @@
-# AlertmanagerConfig - routes all Kafka-namespace alerts to the homelab
-# Telegram bridge over the WireGuard tunnel between this OCI VM and the
-# Raspberry Pi homelab.
+# AlertmanagerConfig - routes all Kafka SLO alerts (by alertname prefix)
+# to a Telegram bridge running on the homelab Raspberry Pi, over a
+# WireGuard tunnel to this OCI VM.
 #
 # The bridge (alertmanager-telegram-bridge) runs as a k8s Deployment on
 # the Pi, exposed via NodePort 30119 at 10.0.0.1 (homelab WireGuard IP
@@ -10,6 +10,12 @@
 # kube-prometheus-stack's Alertmanager was installed with
 # alertmanagerConfigSelector: {} and alertmanagerConfigNamespaceSelector: {},
 # so this CR is picked up without extra selectors.
+#
+# Matcher note: we match on alertname regex rather than namespace, because
+# upstream Kafka burn-rate alerts don't carry a namespace label by default -
+# the recording rule they consume aggregates away pod-level labels, so no
+# namespace reaches the alert payload. Alertname regex is a stable contract
+# and future Kafka SLO alerts just need to keep the Kafka prefix.
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
@@ -22,15 +28,14 @@ spec:
     receiver: kafka-telegram-bridge
     # Group by cluster+alertname so three brokers down become one message,
     # not three.
-    groupBy: [alertname, strimzi_io_cluster]
+    groupBy: [alertname, consumergroup]
     groupWait: 30s
     groupInterval: 5m
     repeatInterval: 1h
-    # Narrow the route to our own alerts by namespace. Everything else
-    # keeps using the parent Alertmanager's default receiver.
     matchers:
-      - name: namespace
-        value: kafka
+      - matchType: =~
+        name: alertname
+        value: "Kafka.*"
     # critical/page alerts repeat sooner so pages don't go silent while
     # the burn-rate alert is still firing.
     routes:

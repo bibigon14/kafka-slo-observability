@@ -1,0 +1,18 @@
+# yamllint config for kafka-slo-observability
+# Relaxed line-length (k8s manifests often have long image/path strings)
+# and allows truthy "on" (used in CronJobs schedules etc.)
+extends: default
+
+rules:
+  line-length:
+    max: 160
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off']
+  document-start:
+    present: false
+  indentation:
+    spaces: 2
+    indent-sequences: true

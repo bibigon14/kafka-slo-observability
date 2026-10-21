@@ -1,0 +1,68 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: yamllint
+        uses: karancode/yamllint-github-action@v3.0.0
+        with:
+          yamllint_file_or_dir: 'manifests'
+          yamllint_strict: true
+          yamllint_config_filepath: '.yamllint'
+
+  kubeconform:
+    name: kubeconform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar -xzf - -C /usr/local/bin kubeconform
+          kubeconform -v
+      - name: Validate manifests against Strimzi + Prometheus Operator CRDs
+        run: |
+          # Strimzi (Kafka, KafkaNodePool, KafkaTopic) and
+          # kube-prometheus-stack (PodMonitor, PrometheusRule) CRDs are
+          # not in the kubernetes-json-schema catalog, so we point
+          # kubeconform at the upstream schema repos directly.
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -summary \
+            manifests/
+
+  kube-score:
+    name: kube-score
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Install kube-score
+        run: |
+          curl -sSfL https://github.com/zegl/kube-score/releases/download/v1.19.0/kube-score_1.19.0_linux_amd64.tar.gz \
+            | tar -xzf - -C /usr/local/bin kube-score
+          kube-score version
+      - name: Lint workload manifests
+        # kube-score checks Deployment / Pod best practices. We scope it
+        # to manifests/workload (producer/consumer) because Strimzi
+        # (KafkaNodePool / Kafka CRs) and Prometheus Operator CRs
+        # (PodMonitor / PrometheusRule) aren't Pod specs - kube-score
+        # has nothing to say about them.
+        run: |
+          kube-score score \
+            --ignore-test container-resources \
+            --ignore-test container-security-context-user-group-id \
+            --ignore-test container-security-context-readonlyrootfilesystem \
+            --ignore-test pod-networkpolicy \
+            manifests/workload/

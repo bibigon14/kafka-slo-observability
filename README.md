@@ -1,5 +1,7 @@
 # kafka-slo-observability
 
+[![validate](https://github.com/bibigon14/kafka-slo-observability/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/bibigon14/kafka-slo-observability/actions/workflows/validate.yml)
+
 Strimzi Kafka cluster on OCI Ampere A1 (k3s) with a full SRE observability
 stack: JMX metrics, Grafana dashboards, Prometheus-Operator PodMonitors,
 and multi-window multi-burn-rate SLO alerts.
@@ -115,7 +117,7 @@ catches a slower leak before it eats the budget.
 
 ## Lessons captured in `docs/`
 
-- **PodMonitor relabels for dashboard filters**. Strimzi's upstream
+- **PodMonitor relabels for dashboard filters** ([postmortem](docs/postmortems/2026-10-21-strimzi-grafana-no-data.md)). Strimzi's upstream
   Grafana dashboards filter JVM panels on `strimzi_io_name="<cluster>-kafka"`
   and template-var the pod name from `strimzi_io_pod_name`. Pod labels have
   these as `strimzi.io/name` and `strimzi.io/pod-name`; without an explicit
